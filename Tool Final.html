@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Part Database Tool</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<meta name="viewport" content="width=1280">
+<style>
+
+body { font-family: Arial; margin: 15px; background: #f4f4f4; }
+
+.panel { background: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+
+input, select, button { padding: 8px; margin: 4px; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; }
+
+button { background: #007bff; color: white; border: none; font-weight: bold; }
+button:hover { background: #0056b3; }
+button:active { background: #004085; }
+
+.button-group { margin: 10px 0; display: flex; flex-wrap: wrap; gap: 5px; }
+.search-group  { margin: 8px 0; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+
+input[type="text"], input[type="file"], select { padding: 8px; margin: 4px; border: 1px solid #ccc; border-radius: 4px; }
+
+.stats { font-weight: bold; margin: 8px 0; padding: 8px; background: #e8f4f8; border-radius: 4px; display: inline-block; }
+
+.status-indicator { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+.status-online  { background: #28a745; }
+.status-offline { background: #dc3545; }
+
+/* ── Table ── */
+.table-container {
+    overflow: auto;
+    height: 75vh;          /* fixed height required for virtual scroll */
+    border: 1px solid #ccc;
+    background: white;
+    margin-top: 10px;
+    /* GPU layer — reduces iOS repaint cost */
+    -webkit-overflow-scrolling: touch;
+    will-change: scroll-position;
+}
+
+table { border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+
+th, td { border: 1px solid #ddd; padding: 3px 4px; overflow: hidden; white-space: nowrap; }
+
+th {
+    position: sticky; top: 0;
+    background: #e8e8e8; z-index: 20; font-weight: bold;
+    white-space: nowrap;
+}
+
+/* ── Virtual scroll spacer rows ── */
+#vsTop td, #vsBottom td { border: none !important; padding: 0 !important; }
+
+/* ── Cell inputs — fixed height, no resize (critical for virtual scroll) ── */
+.cellInput {
+    width: 100%; border: none; background: transparent;
+    font-size: 12px; resize: none;
+    height: 24px; line-height: 24px;
+    overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; padding: 0 2px;
+    box-sizing: border-box;
+}
+.cellInput:focus { outline: 1px solid #007bff; background: #fffacd; overflow: visible; white-space: normal; z-index: 10; position: relative; }
+
+/* ── Column widths ── */
+.w-vt   { width: 160px; min-width: 160px; }
+.w-sl   { width:  70px; min-width:  70px; }
+.w-pn   { width: 160px; min-width: 160px; }
+.w-note { width: 200px; min-width: 200px; }
+.w-desc { width: 400px; min-width: 400px; }
+.w-sm   { width: 120px; min-width: 120px; }
+.w-chk  { width:  36px; min-width:  36px; }
+
+/* ── Sticky columns ── */
+.sticky1 { position: sticky; left: 0;    background: white; z-index: 5; }
+.sticky2 { position: sticky; left: 160px; background: white; z-index: 5; }
+.sticky3 { position: sticky; left: 230px; background: white; z-index: 5; }
+.sticky4 { position: sticky; left: 390px; background: white; z-index: 5; }
+.sticky5 { position: sticky; left: 550px; background: white; z-index: 5; }
+
+th.sticky1, th.sticky2, th.sticky3, th.sticky4, th.sticky5 { background: #d9edf7; }
+
+.modified      { background: #fff3cd !important; }
+.duplicate-cell { background: #ffcccc !important; }
+
+/* ── Dark mode ── */
+.dark-mode { background: #222 !important; color: #fff !important; }
+.dark-mode .panel { background: #333 !important; color: #fff !important; }
+.dark-mode .table-container { background: #444 !important; }
+.dark-mode table { background: #333 !important; color: #fff !important; }
+.dark-mode th { background: #555 !important; color: #fff !important; }
+.dark-mode td { background: #444 !important; color: #fff !important; border-color: #555 !important; }
+.dark-mode .cellInput { background: transparent !important; color: #fff !important; }
+.dark-mode .sticky1, .dark-mode .sticky2, .dark-mode .sticky3,
+.dark-mode .sticky4, .dark-mode .sticky5 { background: #444 !important; }
+
+/* ── Scanner ── */
+#scannerModal { display:none; position:fixed; top:0;left:0; width:100%;height:100%; background:rgba(0,0,0,0.85); z-index:9999; flex-direction:column; align-items:center; justify-content:center; }
+#scannerModal.active { display: flex; }
+#scannerBox { background:white; border-radius:14px; padding:20px; width:92%; max-width:420px; box-shadow:0 8px 32px rgba(0,0,0,0.4); }
+#scannerBox h3 { margin:0 0 12px; font-size:16px; text-align:center; }
+#reader { width:100%; border-radius:8px; overflow:hidden; }
+#scannerStatus { text-align:center; margin:10px 0 6px; font-size:13px; color:#555; min-height:20px; }
+#btnCloseScanner { width:100%; margin-top:8px; background:#dc3545; padding:10px; font-size:15px; }
+#btnScan { background:#28a745; }
+
+.green { color:green; font-weight:bold; }
+.red   { color:red;   font-weight:bold; }
+
+</style>
+</head>
+<body>
+<div class="panel">
+
+<h2>
+  Part Database Tool
+  <span class="status-indicator status-offline" id="statusIndicator"></span>
+  <span id="connectionStatus">Offline</span>
+</h2>
+
+<div class="button-group">
+  <button onclick="loadGoogleSheets()">Refresh</button>
+  <button onclick="syncToGoogle()">Sync to Sheets</button>
+  <button onclick="saveExcel()">Save Excel</button>
+  <button onclick="addRow()">Add Row</button>
+  <button onclick="deleteSelected()">Delete Row</button>
+  <button onclick="undo()">Undo</button>
+  <button onclick="toggleDarkMode()">Dark Mode</button>
+</div>
+
+<div class="search-group">
+  <select id="field"><option value="ALL">All Fields</option></select>
+  <input type="text" id="keyword" placeholder="Search" onkeydown="if(event.key==='Enter') searchData()">
+  <button onclick="searchData()">Search</button>
+  <button onclick="clearSearch()">Clear</button>
+  <button onclick="sortAZ()">A→Z</button>
+  <button onclick="sortZA()">Z→A</button>
+</div>
+
+<div class="search-group">
+  <input type="file" id="excelFile" accept=".xlsx,.xls,.csv">
+  <button onclick="importExcel()">Import Excel</button>
+</div>
+
+<div class="search-group">
+  <input type="text" id="barcodeInput" placeholder="Barcode search" onkeydown="if(event.key==='Enter') barcodeSearch()">
+  <button onclick="barcodeSearch()">🔍 Barcode</button>
+  <button id="btnScan" onclick="openScanner()">📷 Scan</button>
+</div>
+
+<!-- Scanner Modal -->
+<div id="scannerModal">
+  <div id="scannerBox">
+    <h3>📷 Scan Barcode / QR Code</h3>
+    <div id="reader"></div>
+    <div id="scannerStatus">Đang khởi động camera...</div>
+    <button id="btnCloseScanner" onclick="closeScanner()">✕ Đóng</button>
+  </div>
+</div>
+
+<div class="stats" id="stats">Ready</div>
+
+<div class="table-container" id="tableContainer">
+  <table id="tbl">
+    <thead></thead>
+    <tbody>
+      <tr id="vsTop"><td></td></tr>
+      <tr id="vsBottom"><td></td></tr>
+    </tbody>
+  </table>
+</div>
+
+</div><!-- /panel -->
+
+<script>
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzWNdMWsPvOm9TDfU1m3zwWq6_YY2NobeEgsfZ8mfDVZLBRApWDgR9-25ACS7SnUDrmPQ/exec";
+
+/* ─── State ─── */
+let rows        = [];
+let headers     = [];
+let undoStack   = [];
+let darkMode    = false;
+let isEditing   = false;
+let isOnline    = false;
+let lastSyncTime = null;
+let duplicateMap = {};
+const selectedRows = new Set();   // track selected row objects
+
+/* ─── Virtual Scroll ─── */
+const VS_ROW_H  = 30;   // fixed row height px
+const VS_BUFFER = 15;   // rows rendered above/below viewport
+let vsData      = [];   // current displayed data
+let vsStart     = 0;
+let vsEnd       = 0;
+let vsRafPending = false;
+
+/* ═══ INIT ═══ */
+window.onload = function(){
+    if(localStorage.getItem("darkMode") === "true") toggleDarkMode();
+    loadGoogleSheets();
+};
+
+// Auto-sync 60s
+setInterval(function(){
+    if(!isEditing && rows.length > 0 && isOnline) syncToGoogle();
+}, 60000);
+
+/* ═══ CONNECTION ═══ */
+function setConnectionStatus(){
+    const ind = document.getElementById("statusIndicator");
+    const txt = document.getElementById("connectionStatus");
+    if(isOnline){ ind.className="status-indicator status-online"; txt.textContent="Online"; }
+    else        { ind.className="status-indicator status-offline"; txt.textContent="Offline"; }
+}
+
+/* ═══ LOAD / SYNC ═══ */
+async function loadGoogleSheets(){
+    try{
+        updateStats("⏳ Loading from Google Sheets...");
+        const resp = await fetch(SCRIPT_URL);
+        if(!resp.ok) throw new Error("HTTP " + resp.status);
+        const data = await resp.json();
+        if(!data || data.length === 0) throw new Error("No data");
+
+        headers = data[0];
+        rows = [];
+        for(let i = 1; i < data.length; i++){
+            let obj = {};
+            headers.forEach((h,idx) => { obj[h] = data[i][idx]; });
+            rows.push(obj);
+        }
+
+        isOnline = true; lastSyncTime = new Date().toLocaleTimeString();
+        setConnectionStatus(); buildFieldList(); duplicateCheck();
+        render(rows); saveLocalData();
+        updateStats("✅ Loaded " + rows.length + " records | " + lastSyncTime);
+    }
+    catch(err){
+        isOnline = false; setConnectionStatus();
+        const saved = localStorage.getItem("PartDB_v3");
+        if(saved){
+            try{
+                const d = JSON.parse(saved);
+                if(d && d.headers && d.rows){
+                    headers = d.headers; rows = d.rows;
+                    buildFieldList(); duplicateCheck(); render(rows);
+                    updateStats("⚠️ Offline — local data loaded (" + rows.length + " records)");
+                }
+            } catch(e){ updateStats("Error: " + err.message); }
+        } else {
+            alert("Cannot connect and no local backup.\n" + err.message);
+        }
+    }
+}
+
+function saveLocalData(){
+    try{ localStorage.setItem("PartDB_v3", JSON.stringify({headers, rows, lastSync: new Date().toISOString()})); }
+    catch(e){ console.warn("LocalStorage error:", e); }
+}
+
+async function syncToGoogle(){
+    if(!rows.length){ alert("No data to sync"); return; }
+    try{
+        updateStats("⏳ Syncing...");
+        let data = [headers];
+        rows.forEach(r => { data.push(headers.map(h => r[h] ?? "")); });
+        await fetch(SCRIPT_URL, {
+            method: "POST", mode: "no-cors",
+            headers: {"Content-Type": "text/plain;charset=utf-8"},
+            body: JSON.stringify(data)
+        });
+        isOnline = true; lastSyncTime = new Date().toLocaleTimeString();
+        setConnectionStatus(); saveLocalData();
+        updateStats("✅ Synced at " + lastSyncTime + " | " + rows.length + " records");
+    }
+    catch(err){
+        isOnline = false; setConnectionStatus(); saveLocalData();
+        updateStats("⚠️ Sync failed — saved locally");
+        alert("Sync failed: " + err.message);
+    }
+}
+
+/* ═══ FIELD LIST ═══ */
+function buildFieldList(){
+    const f = document.getElementById("field");
+    f.innerHTML = '<option value="ALL">All Fields</option>';
+    headers.forEach(h => { f.innerHTML += `<option value="${h}">${h}</option>`; });
+}
+
+function updateStats(msg){ document.getElementById("stats").innerText = msg; }
+
+/* ═══ COLUMN HELPERS ═══ */
+function getStickyClass(col){
+    const c = String(col).trim().toUpperCase();
+    if(c==="VTCODE")          return "sticky1";
+    if(c==="SL")              return "sticky2";
+    if(c==="P/N2"||c==="PN2") return "sticky3";
+    if(c==="P/N3"||c==="PN3") return "sticky4";
+    if(c==="NOTE")            return "sticky5";
+    return "";
+}
+function getWidthClass(col){
+    const c = String(col).trim().toUpperCase();
+    if(c==="DESCRIPTION") return "w-desc";
+    if(c==="VTCODE")      return "w-vt";
+    if(c==="SL")          return "w-sl";
+    if(c==="P/N2"||c==="PN2"||c==="P/N3"||c==="PN3") return "w-pn";
+    if(c==="NOTE")        return "w-note";
+    return "w-sm";
+}
+
+/* ═══════════════════════════════════════
+   VIRTUAL SCROLL — core engine
+════════════════════════════════════════ */
+
+function render(data){
+    vsData  = data;
+    vsStart = 0;
+    vsEnd   = 0;
+    selectedRows.clear();
+    _vsSetup();
+}
+
+function _vsSetup(){
+    const thead = document.querySelector("#tbl thead");
+
+    // Header
+    thead.innerHTML = "";
+    if(vsData.length === 0){
+        document.querySelector("#tbl tbody").innerHTML =
+            '<tr id="vsTop"><td></td></tr><tr id="vsBottom"><td></td></tr>';
+        updateStats("Records: 0 / " + rows.length);
+        return;
+    }
+
+    const colCount = headers.length + 1;
+    let headHTML = `<tr><th class="w-chk">✓</th>`;
+    headers.forEach(h => {
+        headHTML += `<th class="${getStickyClass(h)} ${getWidthClass(h)}">${h}</th>`;
+    });
+    headHTML += "</tr>";
+    thead.innerHTML = headHTML;
+
+    // Reset tbody with spacers
+    const tbody = document.querySelector("#tbl tbody");
+    tbody.innerHTML = "";
+
+    const top = document.createElement("tr");
+    top.id = "vsTop";
+    top.innerHTML = `<td colspan="${colCount}" style="height:0;padding:0;border:none;"></td>`;
+
+    const bot = document.createElement("tr");
+    bot.id = "vsBottom";
+    bot.innerHTML = `<td colspan="${colCount}" style="height:${vsData.length * VS_ROW_H}px;padding:0;border:none;"></td>`;
+
+    tbody.appendChild(top);
+    tbody.appendChild(bot);
+
+    // Scroll listener — throttled with rAF
+    const container = document.getElementById("tableContainer");
+    container.onscroll = _vsOnScroll;
+
+    // Render initial visible rows
+    container.scrollTop = 0;
+    _vsRender();
+
+    updateStats("Records: " + vsData.length + " / " + rows.length +
+        (lastSyncTime ? " | " + lastSyncTime : ""));
+}
+
+function _vsOnScroll(){
+    if(vsRafPending) return;
+    vsRafPending = true;
+    requestAnimationFrame(() => { _vsRender(); vsRafPending = false; });
+}
+
+function _vsRender(){
+    const container = document.getElementById("tableContainer");
+    const scrollTop = container.scrollTop;
+    const viewH     = container.clientHeight;
+    const total     = vsData.length;
+
+    const newStart = Math.max(0,     Math.floor(scrollTop / VS_ROW_H) - VS_BUFFER);
+    const newEnd   = Math.min(total, Math.ceil((scrollTop + viewH) / VS_ROW_H) + VS_BUFFER);
+
+    if(newStart === vsStart && newEnd === vsEnd) return;
+    vsStart = newStart;
+    vsEnd   = newEnd;
+
+    const tbody     = document.querySelector("#tbl tbody");
+    const topSpacer = document.getElementById("vsTop");
+    const botSpacer = document.getElementById("vsBottom");
+
+    // Remove existing data rows
+    tbody.querySelectorAll("tr.vsRow").forEach(r => r.remove());
+
+    // Update spacer heights
+    topSpacer.firstChild.style.height = (vsStart * VS_ROW_H) + "px";
+    botSpacer.firstChild.style.height = ((total - vsEnd) * VS_ROW_H) + "px";
+
+    // Build visible rows
+    const frag = document.createDocumentFragment();
+    for(let i = vsStart; i < vsEnd; i++){
+        const tr = _buildRow(vsData[i], i);
+        frag.appendChild(tr);
+    }
+    botSpacer.before(frag);
+}
+
+/* ─── Build single row ─── */
+function _buildRow(row, idx){
+    const tr = document.createElement("tr");
+    tr.className = "vsRow";
+    tr.style.height = VS_ROW_H + "px";
+
+    // Checkbox
+    const tdChk = document.createElement("td");
+    tdChk.className = "w-chk";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.className = "rowCheck";
+    cb.checked = selectedRows.has(row);
+    cb.addEventListener("change", function(){
+        if(this.checked) selectedRows.add(row);
+        else             selectedRows.delete(row);
+    });
+    tdChk.appendChild(cb);
+    tr.appendChild(tdChk);
+
+    // Data cells
+    headers.forEach(col => {
+        const td = document.createElement("td");
+        const sc = getStickyClass(col);
+        const wc = getWidthClass(col);
+        td.className = (sc + " " + wc).trim();
+
+        let val = row[col];
+        if(val === undefined || val === null) val = "";
+        val = String(val);
+
+        if(duplicateMap[val.trim()] > 1) td.classList.add("duplicate-cell");
+
+        const inp = document.createElement("input");
+        inp.className = "cellInput";
+        inp.value = val;
+        inp.title = val;   // tooltip shows full content
+
+        inp.addEventListener("focus",  () => { isEditing = true; });
+        inp.addEventListener("blur",   () => { isEditing = false; inp.title = inp.value; });
+        inp.addEventListener("input",  function(){ row[col] = this.value; tr.classList.add("modified"); });
+        inp.addEventListener("change", function(){ row[col] = this.value; tr.classList.add("modified"); saveLocalData(); });
+
+        td.appendChild(inp);
+        tr.appendChild(td);
+    });
+
+    return tr;
+}
+
+/* ═══ CRUD ═══ */
+function addRow(){
+    let obj = {};
+    headers.forEach(h => { obj[h] = ""; });
+    rows.unshift(obj);
+    saveLocalData();
+    render(rows);
+}
+
+function deleteSelected(){
+    if(selectedRows.size === 0){ alert("Please select rows to delete"); return; }
+    if(!confirm("Delete " + selectedRows.size + " row(s)?")) return;
+    undoStack.push(JSON.parse(JSON.stringify(rows)));
+    if(undoStack.length > 20) undoStack.shift();
+    rows = rows.filter(r => !selectedRows.has(r));
+    selectedRows.clear();
+    saveLocalData();
+    render(rows);
+}
+
+function undo(){
+    if(!undoStack.length){ alert("No undo history"); return; }
+    rows = undoStack.pop();
+    saveLocalData(); render(rows);
+}
+
+/* ═══ SEARCH / SORT ═══ */
+function searchData(){
+    const kw  = document.getElementById("keyword").value.toLowerCase().trim();
+    const fld = document.getElementById("field").value;
+    if(kw === ""){ render(rows); return; }
+    const result = rows.filter(row => {
+        if(fld === "ALL") return Object.values(row).some(v => String(v).toLowerCase().includes(kw));
+        return String(row[fld]||"").toLowerCase().includes(kw);
+    });
+    render(result);
+}
+
+function clearSearch(){
+    document.getElementById("keyword").value = "";
+    render(rows);
+}
+
+function sortAZ(){
+    const fld = document.getElementById("field").value;
+    if(fld==="ALL"){ alert("Select a field to sort"); return; }
+    rows.sort((a,b) => String(a[fld]||"").localeCompare(String(b[fld]||"")));
+    saveLocalData(); render(rows);
+}
+
+function sortZA(){
+    const fld = document.getElementById("field").value;
+    if(fld==="ALL"){ alert("Select a field to sort"); return; }
+    rows.sort((a,b) => String(b[fld]||"").localeCompare(String(a[fld]||"")));
+    saveLocalData(); render(rows);
+}
+
+/* ═══ EXPORT / IMPORT ═══ */
+function saveExcel(){
+    if(!rows.length){ alert("No data"); return; }
+    let data = [headers];
+    rows.forEach(r => { data.push(headers.map(h => r[h]||"")); });
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Database");
+    XLSX.writeFile(wb, "PartDatabase_" + new Date().toISOString().substring(0,10) + ".xlsx");
+}
+
+function importExcel(){
+    const file = document.getElementById("excelFile").files[0];
+    if(!file){ alert("Please select a file"); return; }
+    const reader = new FileReader();
+    reader.onload = function(e){
+        try{
+            const wb  = XLSX.read(e.target.result, {type:"binary"});
+            const ws  = wb.Sheets[wb.SheetNames[0]];
+            const arr = XLSX.utils.sheet_to_json(ws, {header:1});
+            if(arr.length < 1){ alert("File empty"); return; }
+            undoStack.push(JSON.parse(JSON.stringify(rows)));
+            if(undoStack.length > 20) undoStack.shift();
+            headers = arr[0]; rows = [];
+            for(let i = 1; i < arr.length; i++){
+                let obj = {};
+                headers.forEach((h,idx) => { obj[h] = arr[i][idx] || ""; });
+                rows.push(obj);
+            }
+            saveLocalData(); buildFieldList(); duplicateCheck(); render(rows);
+            updateStats("Imported " + rows.length + " records");
+        } catch(err){ alert("Import error: " + err); }
+    };
+    reader.readAsBinaryString(file);
+}
+
+/* ═══ DUPLICATE CHECK ═══ */
+function duplicateCheck(){
+    duplicateMap = {};
+    rows.forEach(r => {
+        ["VTCODE","P/N2","PN2","P/N3","PN3"].forEach(col => {
+            const v = String(r[col]||"").trim();
+            if(v) duplicateMap[v] = (duplicateMap[v]||0) + 1;
+        });
+    });
+}
+
+/* ═══ DARK MODE ═══ */
+function toggleDarkMode(){
+    darkMode = !darkMode;
+    document.body.classList.toggle("dark-mode", darkMode);
+    localStorage.setItem("darkMode", darkMode);
+}
+
+/* ═══ BARCODE SEARCH ═══ */
+function levenshtein(a, b){
+    const m = [];
+    for(let i=0;i<=b.length;i++) m[i]=[i];
+    for(let j=0;j<=a.length;j++) m[0][j]=j;
+    for(let i=1;i<=b.length;i++) for(let j=1;j<=a.length;j++)
+        m[i][j] = b[i-1]===a[j-1] ? m[i-1][j-1] : Math.min(m[i-1][j-1]+1,m[i][j-1]+1,m[i-1][j]+1);
+    return m[b.length][a.length];
+}
+
+function barcodeSearch(){
+    const code = document.getElementById("barcodeInput").value.toUpperCase().trim();
+    if(!code){ render(rows); return; }
+    const fields = ["MFG1_PART#","VTCODE","P/N2","PN2","P/N3","PN3"];
+    for(const fld of fields){
+        const result = rows.filter(r => {
+            const v = String(r[fld]||"").toUpperCase().trim();
+            return v && code.includes(v);
+        });
+        if(result.length){ render(result); updateStats("Found by " + fld + ": " + result.length + " record(s)"); return; }
+    }
+    // Fuzzy fallback
+    let candidates = [];
+    rows.forEach(r => {
+        fields.forEach(fld => {
+            const v = String(r[fld]||"").toUpperCase().trim();
+            if(!v) return;
+            let best = 999;
+            for(let i=0;i<=Math.max(0,code.length-v.length);i++){
+                const d = levenshtein(code.substring(i,i+v.length), v);
+                if(d < best) best = d;
+            }
+            candidates.push({d:best, r});
+        });
+    });
+    candidates.sort((a,b) => a.d - b.d);
+    render(candidates.slice(0,10).map(x => x.r));
+    updateStats("No exact match — showing closest results");
+}
+
+/* ═══ BARCODE SCANNER ═══ */
+let html5QrCode = null;
+let scannerRunning = false;
+
+function openScanner(){
+    document.getElementById("scannerModal").classList.add("active");
+    document.getElementById("scannerStatus").textContent = "Đang khởi động camera...";
+    startScanner();
+}
+
+async function startScanner(){
+    try{
+        if(html5QrCode && scannerRunning){ await html5QrCode.stop(); html5QrCode.clear(); }
+        html5QrCode = new Html5Qrcode("reader");
+        const formats = [
+            Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39,  Html5QrcodeSupportedFormats.CODE_93,
+            Html5QrcodeSupportedFormats.EAN_13,   Html5QrcodeSupportedFormats.EAN_8,
+            Html5QrcodeSupportedFormats.UPC_A,    Html5QrcodeSupportedFormats.UPC_E,
+            Html5QrcodeSupportedFormats.ITF,      Html5QrcodeSupportedFormats.DATA_MATRIX,
+        ];
+        await html5QrCode.start(
+            {facingMode:"environment"},
+            { fps:15, qrbox:(w,h)=>({width:Math.min(Math.floor(w*0.8),300),height:Math.min(Math.floor(h*0.5),150)}),
+              aspectRatio:1.5, formatsToSupport:formats,
+              experimentalFeatures:{useBarCodeDetectorIfSupported:true} },
+            (text) => {
+                document.getElementById("barcodeInput").value = text;
+                document.getElementById("scannerStatus").textContent = "✅ " + text;
+                document.getElementById("scannerBox").style.border = "3px solid #28a745";
+                if(navigator.vibrate) navigator.vibrate(100);
+                setTimeout(() => { closeScanner(); barcodeSearch(); }, 600);
+            },
+            () => {}
+        );
+        scannerRunning = true;
+        document.getElementById("scannerStatus").textContent = "🟢 Camera sẵn sàng — đưa barcode vào khung";
+    }
+    catch(err){
+        let msg = "Không thể mở camera.";
+        if(err.toString().includes("Permission")) msg = "❌ Chưa cấp quyền camera.";
+        else if(err.toString().includes("NotFound")) msg = "❌ Không tìm thấy camera.";
+        else if(location.protocol !== "https:") msg = "❌ Cần HTTPS để dùng camera.";
+        document.getElementById("scannerStatus").textContent = msg;
+    }
+}
+
+async function closeScanner(){
+    document.getElementById("scannerModal").classList.remove("active");
+    document.getElementById("scannerBox").style.border = "none";
+    if(html5QrCode && scannerRunning){
+        try{ await html5QrCode.stop(); html5QrCode.clear(); } catch(e){}
+        html5QrCode = null; scannerRunning = false;
+    }
+}
+
+document.getElementById("scannerModal").addEventListener("click", function(e){
+    if(e.target === this) closeScanner();
+});
+
+</script>
+</body>
+</html>
